@@ -1,7 +1,24 @@
 let s:file = ''
 
 function! utility#is_active()
-  return g:gitgutter_enabled && utility#exists_file() && utility#is_tracked_by_git()
+  return g:gitgutter_enabled && utility#exists_file()
+endfunction
+
+" A replacement for the built-in `shellescape(arg)`.
+"
+" Recent versions of Vim handle shell escaping pretty well.  However older
+" versions aren't as good.  This attempts to do the right thing.
+"
+" See:
+" https://github.com/tpope/vim-fugitive/blob/8f0b8edfbd246c0026b7a2388e1d883d579ac7f6/plugin/fugitive.vim#L29-L37
+function! utility#shellescape(arg)
+  if a:arg =~ '^[A-Za-z0-9_/.-]\+$'
+    return a:arg
+  elseif &shell =~# 'cmd'
+    return '"' . substitute(substitute(a:arg, '"', '""', 'g'), '%', '"%"', 'g') . '"'
+  else
+    return shellescape(a:arg)
+  endif
 endfunction
 
 function! utility#current_file()
@@ -16,12 +33,16 @@ function! utility#file()
   return s:file
 endfunction
 
-function! utility#exists_file()
-  return filereadable(utility#file())
+function! utility#filename()
+  return fnamemodify(s:file, ':t')
 endfunction
 
 function! utility#directory_of_file()
-  return shellescape(fnamemodify(utility#file(), ':h'))
+  return fnamemodify(s:file, ':h')
+endfunction
+
+function! utility#exists_file()
+  return filereadable(utility#file())
 endfunction
 
 function! utility#has_unsaved_changes(file)
@@ -36,52 +57,44 @@ function! utility#save_last_seen_change(file)
   call setbufvar(a:file, 'gitgutter_last_tick', getbufvar(a:file, 'changedtick'))
 endfunction
 
-" https://github.com/tpope/vim-dispatch/blob/9cdd05a87f8a47120335be03dfcd8358544221cd/autoload/dispatch/windows.vim#L8-L17
-function! utility#escape(str)
-  if &shellxquote ==# '"'
-    return '"' . substitute(a:str, '"', '""', 'g') . '"'
+function! utility#buffer_contents()
+  if &fileformat ==# "dos"
+    let eol = "\r\n"
+  elseif &fileformat ==# "mac"
+    let eol = "\r"
   else
-    let esc = exists('+shellxescape') ? &shellxescape : '"&|<>()@^'
-    return &shellquote .
-          \ substitute(a:str, '['.esc.']', '&', 'g') .
-          \ get({'(': ')', '"(': ')"'}, &shellquote, &shellquote)
+    let eol = "\n"
   endif
+  return join(getbufline(s:file, 1, '$'), eol) . eol
 endfunction
 
-function! utility#discard_stdout_and_stderr()
-  if !exists('utility#discard')
-    if &shellredir ==? '>%s 2>&1'
-      let utility#discard = ' > /dev/null 2>&1'
-    else
-      let utility#discard = ' >& /dev/null'
-    endif
+function! utility#file_relative_to_repo_root()
+  let file_path_relative_to_repo_root = getbufvar(s:file, 'gitgutter_repo_relative_path')
+  if empty(file_path_relative_to_repo_root)
+    let dir_path_relative_to_repo_root = system(utility#command_in_directory_of_file('git rev-parse --show-prefix'))
+    let dir_path_relative_to_repo_root = utility#strip_trailing_new_line(dir_path_relative_to_repo_root)
+    let file_path_relative_to_repo_root = dir_path_relative_to_repo_root . utility#filename()
+    call setbufvar(s:file, 'gitgutter_repo_relative_path', file_path_relative_to_repo_root)
   endif
-  return utility#discard
+  return file_path_relative_to_repo_root
 endfunction
 
 function! utility#command_in_directory_of_file(cmd)
-  let utility#cmd_in_dir = 'cd ' . utility#directory_of_file() . ' && ' . a:cmd
-  return substitute(utility#cmd_in_dir, "'", '"', 'g')
+  return 'cd ' . utility#shellescape(utility#directory_of_file()) . ' && ' . a:cmd
 endfunction
 
-function! utility#is_tracked_by_git()
-  let cmd = utility#escape('git ls-files --error-unmatch' . utility#discard_stdout_and_stderr() . ' ' . shellescape(utility#file()))
-  call system(utility#command_in_directory_of_file(cmd))
-  return !v:shell_error
-endfunction
-
-function! utility#differences(hunks)
-  return len(a:hunks) != 0
-endfunction
-
-function! utility#snake_case_to_camel_case(text)
+function! utility#highlight_name_for_change(text)
   if a:text ==# 'added'
-    return 'Added'
+    return 'GitGutterLineAdded'
   elseif a:text ==# 'removed'
-    return 'Removed'
+    return 'GitGutterLineRemoved'
   elseif a:text ==# 'modified'
-    return 'Modified'
+    return 'GitGutterLineModified'
   elseif a:text ==# 'modified_removed'
-    return 'ModifiedRemoved'
+    return 'GitGutterLineModifiedRemoved'
   endif
+endfunction
+
+function utility#strip_trailing_new_line(line)
+  return substitute(a:line, '\n$', '', '')
 endfunction

@@ -3,10 +3,12 @@ function! highlight#define_sign_column_highlight()
 endfunction
 
 function! highlight#define_highlights()
+  let [guibg, ctermbg] = highlight#get_background_colors('SignColumn')
+
   " Highlights used by the signs.
-  highlight GitGutterAddDefault          guifg=#009900 guibg=NONE ctermfg=2 ctermbg=NONE
-  highlight GitGutterChangeDefault       guifg=#bbbb00 guibg=NONE ctermfg=3 ctermbg=NONE
-  highlight GitGutterDeleteDefault       guifg=#ff2222 guibg=NONE ctermfg=1 ctermbg=NONE
+  execute "highlight GitGutterAddDefault    guifg=#009900 guibg=" . guibg . " ctermfg=2 ctermbg=" . ctermbg
+  execute "highlight GitGutterChangeDefault guifg=#bbbb00 guibg=" . guibg . " ctermfg=3 ctermbg=" . ctermbg
+  execute "highlight GitGutterDeleteDefault guifg=#ff2222 guibg=" . guibg . " ctermfg=1 ctermbg=" . ctermbg
   highlight default link GitGutterChangeDeleteDefault GitGutterChangeDefault
 
   highlight default link GitGutterAdd          GitGutterAddDefault
@@ -28,18 +30,16 @@ function! highlight#define_signs()
   sign define GitGutterLineModifiedRemoved
   sign define GitGutterDummy
 
-  if g:gitgutter_signs
-    call highlight#define_sign_symbols()
-    call highlight#define_sign_text_highlights()
-  endif
+  call highlight#define_sign_symbols()
+  call highlight#define_sign_text_highlights()
   call highlight#define_sign_line_highlights()
 endfunction
 
 function! highlight#define_sign_symbols()
-  exe "sign define GitGutterLineAdded           text=" . g:gitgutter_sign_added
-  exe "sign define GitGutterLineModified        text=" . g:gitgutter_sign_modified
-  exe "sign define GitGutterLineRemoved         text=" . g:gitgutter_sign_removed
-  exe "sign define GitGutterLineModifiedRemoved text=" . g:gitgutter_sign_modified_removed
+  execute "sign define GitGutterLineAdded           text=" . g:gitgutter_sign_added
+  execute "sign define GitGutterLineModified        text=" . g:gitgutter_sign_modified
+  execute "sign define GitGutterLineRemoved         text=" . g:gitgutter_sign_removed
+  execute "sign define GitGutterLineModifiedRemoved text=" . g:gitgutter_sign_modified_removed
 endfunction
 
 function! highlight#define_sign_text_highlights()
@@ -61,4 +61,27 @@ function! highlight#define_sign_line_highlights()
     sign define GitGutterLineRemoved         linehl=
     sign define GitGutterLineModifiedRemoved linehl=
   endif
+endfunction
+
+function! highlight#get_background_colors(group)
+  redir => highlight
+  silent execute 'silent highlight ' . a:group
+  redir END
+
+  let link_matches = matchlist(highlight, 'links to \(\S\+\)')
+  if len(link_matches) > 0 " follow the link
+    return highlight#get_background_colors(link_matches[1])
+  endif
+
+  let ctermbg = highlight#match_highlight(highlight, 'ctermbg=\(\S\+\)')
+  let guibg   = highlight#match_highlight(highlight, 'guibg=\(\S\+\)')
+  return [guibg, ctermbg]
+endfunction
+
+function! highlight#match_highlight(highlight, pattern)
+  let matches = matchlist(a:highlight, a:pattern)
+  if len(matches) == 0
+    return 'NONE'
+  endif
+  return matches[1]
 endfunction

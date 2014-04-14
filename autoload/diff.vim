@@ -1,33 +1,47 @@
 let s:grep_available = executable('grep')
-let s:grep_command = ' | ' . (g:gitgutter_escape_grep ? '\grep' : 'grep') . ' -e "^@@ "'
+let s:grep_command = ' | ' . (g:gitgutter_escape_grep ? '\grep' : 'grep') . ' -e ' . utility#shellescape('^@@ ')
 let s:hunk_re = '^@@ -\(\d\+\),\?\(\d*\) +\(\d\+\),\?\(\d*\) @@'
 
 
 function! diff#run_diff(realtime, use_external_grep)
+  " Wrap compound command in parentheses to make Windows happy.
+  let cmd = '(git ls-files --error-unmatch ' . utility#shellescape(utility#filename()) . ' && ('
+
   if a:realtime
-    let blob_name = ':./' . fnamemodify(utility#file(),':t')
+    let blob_name = ':' . utility#shellescape(utility#file_relative_to_repo_root())
     let blob_file = tempname()
-    let cmd = 'git show ' . blob_name . ' > ' . blob_file . ' && diff -U0 ' . g:gitgutter_diff_args . ' ' . blob_file . ' - '
+    let cmd .= 'git show ' . blob_name . ' > ' . blob_file .
+          \ ' && diff -U0 ' . g:gitgutter_diff_args . ' ' . blob_file . ' - '
   else
-    let cmd = 'git diff --no-ext-diff --no-color -U0 ' . g:gitgutter_diff_args . ' ' . shellescape(utility#file())
+    let cmd .= 'git diff --no-ext-diff --no-color -U0 ' . g:gitgutter_diff_args . ' ' . utility#shellescape(utility#filename())
   endif
+
   if a:use_external_grep && s:grep_available
     let cmd .= s:grep_command
   endif
-  let cmd = utility#escape(cmd)
+
+  if (a:use_external_grep && s:grep_available) || a:realtime
+    " grep exits with 1 when no matches are found; diff exits with 1 when
+    " differences are found.  However we want to treat non-matches and
+    " differences as non-erroneous behaviour; so we OR the command with one
+    " which always exits with success (0).
+    let cmd.= ' || exit 0'
+  endif
+
+  let cmd .= '))'
+
   if a:realtime
-    if &fileformat ==# "dos"
-      let eol = "\r\n"
-    elseif &fileformat ==# "mac"
-      let eol = "\r"
-    else
-      let eol = "\n"
-    endif
-    let buffer_contents = join(getline(1, '$'), eol) . eol
-    let diff = system(utility#command_in_directory_of_file(cmd), buffer_contents)
+    let diff = system(utility#command_in_directory_of_file(cmd), utility#buffer_contents())
   else
     let diff = system(utility#command_in_directory_of_file(cmd))
   endif
+
+  if v:shell_error
+    " A shell error indicates the file is not tracked by git (unless something
+    " bizarre is going on).
+    throw 'diff failed'
+  endif
+
   return diff
 endfunction
 
@@ -64,6 +78,7 @@ function! diff#process_hunks(hunks)
   return modified_lines
 endfunction
 
+" Returns [ [<line_number (number)>, <name (string)>], ...]
 function! diff#process_hunk(hunk)
   let modifications = []
   let from_line  = a:hunk[0]
@@ -163,13 +178,18 @@ function! diff#process_modified_and_removed(modifications, from_count, to_count,
   let a:modifications[-1] = [a:to_line + offset - 1, 'modified_removed']
 endfunction
 
-function! diff#generate_diff_for_hunk(hunk)
-  return diff#discard_hunks(diff#run_diff(0, 0), a:hunk)
+function! diff#generate_diff_for_hunk(hunk, keep_header)
+  let diff = diff#discard_hunks(diff#run_diff(0, 0), a:hunk, a:keep_header)
+  if !a:keep_header
+    " Discard summary line
+    let diff = join(split(diff, '\n')[1:-1], "\n")
+  endif
+  return diff
 endfunction
 
-function! diff#discard_hunks(diff, hunk_to_keep)
+function! diff#discard_hunks(diff, hunk_to_keep, keep_header)
   let modified_diff = []
-  let keep_line = 1  " start by keeping header
+  let keep_line = a:keep_header
   for line in split(a:diff, '\n')
     let hunk_info = diff#parse_hunk(line)
     if len(hunk_info) == 4  " start of new hunk
@@ -179,6 +199,5 @@ function! diff#discard_hunks(diff, hunk_to_keep)
       call add(modified_diff, line)
     endif
   endfor
-  " call append('$', modified_diff)
   return join(modified_diff, "\n") . "\n"
 endfunction
